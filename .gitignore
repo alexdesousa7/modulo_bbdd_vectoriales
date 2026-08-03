@@ -1,0 +1,43 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Virtual environments
+.venv/
+venv/
+env/
+env-aurum_market/
+
+# Environment and secrets
+.env
+.env.*
+!.env.template
+
+# Jupyter runtime and local notebook artifacts
+*.nbconvert.ipynb
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local databases and temporary files
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.log
+
+# Qdrant local storage (generated at runtime)
+docker/qdrant/
+
+# Build/distribution artifacts
+build/
+dist/
+*.egg-info/

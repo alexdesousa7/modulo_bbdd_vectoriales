@@ -1,0 +1,16 @@
+# Dependencias necesarias para el proyecto Aurum Market de bbdd Vectoriales
+qdrant-client
+sentence-transformers
+numpy
+pandas
+scikit-learn
+rank-bm25
+matplotlib
+seaborn
+tqdm
+python-dotenv
+torch
+
+# Jupyter environment
+jupyter
+ipykernel
