@@ -123,3 +123,18 @@ def embed_product(text: str, model_name: str = "e5_small") -> np.ndarray:
 
     vector = model.encode(t, normalize_embeddings=False)
     return np.array(vector, dtype=np.float32)
+
+
+def embed_products(texts, model_name: str = "e5_small", batch_size: int = 64) -> np.ndarray:
+    """Genera embeddings de productos en lotes con el mismo contrato que embed_product."""
+    model = load_embedding_model(model_name)
+    normalized = [normalize_text(text) for text in texts]
+    if model_name == "e5_small":
+        normalized = [f"passage: {text}" for text in normalized]
+    vectors = model.encode(
+        normalized,
+        batch_size=batch_size,
+        normalize_embeddings=False,
+        show_progress_bar=False,
+    )
+    return np.asarray(vectors, dtype=np.float32)

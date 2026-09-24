@@ -41,3 +41,6 @@ docker/qdrant/
 build/
 dist/
 *.egg-info/
+
+# Personal notes
+Nota - José Alexander de Sousa.pdf

@@ -16,6 +16,7 @@ from src.ingestion import (
     log_event
 )
 from src.vector_ingestion import (
+    get_qdrant_client,
     upsert_vector,
     delete_vector
 )
@@ -38,7 +39,7 @@ def event_already_applied(conn, sequence: int) -> bool:
 # VERIFICACIÓN DE VISIBILIDAD
 # ============================================================
 
-def verify_visibility(record_id: str, model_name: str):
+def verify_visibility(record_id: str, model_name: str, query_text=None):
     """
     Verifica visibilidad del registro:
     - lectura por ID en SQLite
@@ -57,13 +58,22 @@ def verify_visibility(record_id: str, model_name: str):
     else:
         sqlite_status = "active" if row[0] == 1 else "inactive"
 
-    # Búsqueda vectorial
-    hits = search(record_id, top_k=5, model_name=model_name)
-    qdrant_status = "found" if any(h["record_id"] == record_id for h in hits) else "not_found"
+    # Lectura directa por ID, que no depende de que el UUID tenga significado semántico.
+    client = get_qdrant_client()
+    collection_name = f"aurum_{model_name}"
+    points = client.retrieve(collection_name=collection_name, ids=[record_id])
+    qdrant_status = "found" if points else "not_found"
+
+    # Consulta semántica opcional para verificar también la ruta de búsqueda.
+    search_status = None
+    if query_text:
+        hits = search(query_text, top_k=5, model_name=model_name)
+        search_status = "found" if any(h["record_id"] == record_id for h in hits) else "not_found"
 
     return {
         "sqlite": sqlite_status,
-        "qdrant": qdrant_status
+        "qdrant": qdrant_status,
+        "search": search_status,
     }
 
 
@@ -87,6 +97,7 @@ def apply_event(row, model_name: str):
     # Idempotencia: si ya está aplicado, no hacer nada
     if event_already_applied(conn, sequence):
         log(f"[EVENTS] Evento {sequence} ya aplicado → ignorado")
+        conn.close()
         return "ignored"
 
     # UPSERT
@@ -125,6 +136,7 @@ def apply_event(row, model_name: str):
 
         log_event(conn, sequence, event_id, "UPSERT", record_id)
         conn.commit()
+        conn.close()
 
         log(f"[EVENTS] UPSERT aplicado: {record_id} ({action})")
         return "upsert"
@@ -136,6 +148,7 @@ def apply_event(row, model_name: str):
 
         log_event(conn, sequence, event_id, "DELETE", record_id)
         conn.commit()
+        conn.close()
 
         log(f"[EVENTS] DELETE aplicado: {record_id}")
         return "delete"
@@ -155,7 +168,7 @@ def apply_catalog_events(csv_path, model_name: str):
 
     df = pd.read_csv(csv_path)
 
-    for _, row in df.iterrows():
+    for _, row in df.sort_values("sequence").iterrows():
         apply_event(row, model_name=model_name)
 
     log("[EVENTS] Todos los eventos aplicados correctamente.")

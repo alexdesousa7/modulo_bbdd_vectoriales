@@ -14,7 +14,8 @@ from qdrant_client.models import (
     VectorParams,
     Distance,
     HnswConfigDiff,
-    PointStruct
+    PointStruct,
+    PointIdsList,
 )
 
 from src.config import (
@@ -104,6 +105,30 @@ def upsert_vector(model_name: str, record_id: str, vector, payload: dict):
     return "upsert"
 
 
+def upsert_vectors(model_name: str, points, batch_size: int = 128):
+    """Inserta vectores por lotes y espera a que cada lote quede confirmado."""
+    client = get_qdrant_client()
+    collection_name = f"aurum_{model_name}"
+    pending = list(points)
+
+    for start in range(0, len(pending), batch_size):
+        batch = pending[start:start + batch_size]
+        client.upsert(
+            collection_name=collection_name,
+            points=batch,
+            wait=True,
+        )
+
+    return len(pending)
+
+
+def count_vectors(model_name: str) -> int:
+    """Devuelve el número exacto de puntos persistidos en la colección."""
+    client = get_qdrant_client()
+    collection_name = f"aurum_{model_name}"
+    return int(client.count(collection_name=collection_name, exact=True).count)
+
+
 # ============================================================
 # BORRADO IDEMPOTENTE
 # ============================================================
@@ -119,7 +144,8 @@ def delete_vector(model_name: str, record_id: str):
 
     client.delete(
         collection_name=collection_name,
-        points_selector={"points": [record_id]}
+        points_selector=PointIdsList(points=[record_id]),
+        wait=True,
     )
 
     return "delete"

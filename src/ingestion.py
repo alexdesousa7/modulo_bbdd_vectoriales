@@ -70,6 +70,41 @@ def create_schema():
     log("Esquema SQLite creado correctamente.")
 
 
+def replace_catalog(records):
+    """Reconstruye el catálogo SQLite y limpia el registro de eventos aplicado."""
+    conn = get_connection()
+    conn.execute("DROP TABLE IF EXISTS events_log")
+    conn.execute("DROP TABLE IF EXISTS catalog")
+    conn.commit()
+    conn.close()
+
+    create_schema()
+    conn = get_connection()
+    conn.execute("DELETE FROM events_log")
+    conn.execute("DELETE FROM catalog")
+    conn.executemany(
+        """
+        INSERT INTO catalog (
+            record_id, product_id, title, brand, color, locale, text,
+            catalog_version, active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                record["record_id"], record["product_id"], record["title"],
+                record["brand"], record["color"], record["locale"],
+                record["text"], int(record["catalog_version"]),
+                int(record["active"]),
+            )
+            for record in records
+        ],
+    )
+    conn.commit()
+    count = conn.execute("SELECT COUNT(*) FROM catalog").fetchone()[0]
+    conn.close()
+    return int(count)
+
+
 # ============================================================
 # INGESTA IDEMPOTENTE
 # ============================================================

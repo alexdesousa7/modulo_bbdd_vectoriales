@@ -216,17 +216,17 @@ Con los valores reales:
 
 ```json
 {
-  "ndcg_at_10": 0.7413,
-  "recall_at_10": 0.3213,
-  "mrr_at_10": 0.71875,
-  "latency_p50_ms": 94.8,
-  "latency_p95_ms": 103.5
+  "ndcg_at_10": 0.5231,
+  "recall_at_10": 0.2107,
+  "mrr_at_10": 0.65,
+  "latency_p50_ms": 86.6,
+  "latency_p95_ms": 108.3
 }
 ```
 
 ### ✔ `results/resultados_duplicados.csv`
 - 14 predicciones  
-- threshold ≈ 0.9103  
+- threshold ≈ 0.9159
 - F1 ≈ 1.0  
 
 ---
@@ -234,19 +234,19 @@ Con los valores reales:
 # 📈 **7. Resultados finales del sistema**
 
 ### 🔹 Métricas de ranking (catálogo completo)
-- **nDCG@10 = 0.7413**  
-- **Recall@10 = 0.3213**  
-- **MRR@10 = 0.71875**
+- **nDCG@10 = 0.5231**
+- **Recall@10 = 0.2107**
+- **MRR@10 = 0.6500**
 
 ### 🔹 Latencia
-- **p50 ≈ 94.8 ms**  
-- **p95 ≈ 103.5 ms**
+- **p50 ≈ 86.6 ms**
+- **p95 ≈ 108.3 ms**
 
 ### 🔹 Fidelidad ANN
-- **0.6875**
+- **0.9500**
 
 ### 🔹 Duplicados
-- threshold óptimo: **0.9103**  
+- threshold óptimo: **0.9159**
 - F1 ≈ **1.0**  
 - duplicados reales: similitud **0.92–0.98**
 
@@ -264,9 +264,9 @@ Qdrant permite aplicar filtros **directamente en el índice ANN**, sin postproce
 
 ### ✔ Índice ANN HNSW rápido y estable  
 Resultados reales:  
-- p50 ≈ **94.8 ms**  
-- p95 ≈ **103.5 ms**  
-- Fidelidad ANN = **0.6875**
+- p50 ≈ **86.6 ms**
+- p95 ≈ **108.3 ms**
+- Fidelidad ANN = **0.9500**
 
 ### ✔ Payload estructurado integrado  
 Qdrant almacena vector + metadatos y permite filtrarlos en la misma operación.
@@ -284,15 +284,15 @@ Ingesta real: **15.000 productos → ~25 min en CPU**.
 
 ### ✔ Estabilidad en duplicados  
 Resultados reales:  
-- threshold ≈ **0.9103**  
+- threshold ≈ **0.9159**
 - F1 ≈ **1.0**  
 - duplicados reales: **0.92–0.98**
 
 ### ✔ Calidad suficiente  
 Métricas reales:  
-- nDCG@10 = **0.7413**  
-- Recall@10 = **0.3213**  
-- MRR@10 = **0.71875**
+- nDCG@10 = **0.5231**
+- Recall@10 = **0.2107**
+- MRR@10 = **0.6500**
 
 ### ✔ Reproducibilidad  
 La ejecución del proyecto se ha validado en CPU en este entorno, sin requerir GPU.

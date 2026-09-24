@@ -10,10 +10,11 @@ Regla de duplicados para Aurum Market:
 import pandas as pd
 import numpy as np
 import sqlite3
+import re
 
 from src.embeddings import embed_product
 from src.search_engine import search
-from src.config import DB_PATH, log
+from src.config import BASE_DIR, DB_PATH, log
 
 
 # ============================================================
@@ -50,6 +51,26 @@ def compute_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
     return float(np.dot(vec1, vec2))
 
 
+def _token_overlap(left: str, right: str) -> float:
+    """Calcula cobertura léxica para desempatar candidatos semánticos."""
+    left_tokens = set(re.findall(r"\w+", str(left).lower()))
+    right_tokens = set(re.findall(r"\w+", str(right).lower()))
+    return len(left_tokens & right_tokens) / max(len(left_tokens), 1)
+
+
+def retrieve_candidate(text: str, model_name: str = "e5_small"):
+    """Recupera y reranquea candidatos con una señal léxica reproducible."""
+    results = search(text, top_k=5, model_name=model_name)
+    if not results:
+        raise RuntimeError("La búsqueda no devolvió ningún candidato para el alta")
+
+    for result in results:
+        lexical_score = _token_overlap(text, result.get("title", ""))
+        result["rerank_score"] = float(result["score"]) + 0.05 * lexical_score
+
+    return max(results, key=lambda result: result["rerank_score"])
+
+
 # ============================================================
 # CALIBRACIÓN DEL UMBRAL
 # ============================================================
@@ -68,28 +89,9 @@ def calibrate_threshold(csv_path: str, model_name: str = "e5_small"):
     for _, row in df.iterrows():
 
         incoming_text = f"{row['title']} {row['text']}"
-        incoming_vec = embed_product(incoming_text, model_name=model_name)
-
-        if row["is_duplicate"]:
-            # comparar con el producto real del catálogo
-            ref_product = get_catalog_product(row["reference_product_id"])
-            if ref_product is None:
-                continue
-
-            ref_text = f"{ref_product['title']} {ref_product['text']}"
-            ref_vec = embed_product(ref_text, model_name=model_name)
-
-            sim = compute_similarity(incoming_vec, ref_vec)
-            similarities.append(sim)
-            labels.append(1)
-
-        else:
-            # buscar el más parecido del catálogo
-            result = search(incoming_text, top_k=1, model_name=model_name)[0]
-            sim = result["score"]
-
-            similarities.append(sim)
-            labels.append(0)
+        result = retrieve_candidate(incoming_text, model_name=model_name)
+        similarities.append(float(result["score"]))
+        labels.append(int(bool(row["is_duplicate"])))
 
     similarities = np.array(similarities)
     labels = np.array(labels)
@@ -132,34 +134,22 @@ def evaluate_rule(csv_path: str, threshold: float, model_name: str = "e5_small")
 
     preds = []
     labels = []
+    candidate_matches = []
 
     for _, row in df.iterrows():
 
         incoming_text = f"{row['title']} {row['text']}"
-        incoming_vec = embed_product(incoming_text, model_name=model_name)
+        result = retrieve_candidate(incoming_text, model_name=model_name)
+        sim = float(result["score"])
+        pred = int(sim >= threshold)
 
-        if row["is_duplicate"]:
-            ref_product = get_catalog_product(row["reference_product_id"])
-            if ref_product is None:
-                continue
+        preds.append(pred)
+        labels.append(int(bool(row["is_duplicate"])))
 
-            ref_text = f"{ref_product['title']} {ref_product['text']}"
-            ref_vec = embed_product(ref_text, model_name=model_name)
-
-            sim = compute_similarity(incoming_vec, ref_vec)
-            pred = int(sim >= threshold)
-
-            preds.append(pred)
-            labels.append(1)
-
-        else:
-            result = search(incoming_text, top_k=1, model_name=model_name)[0]
-            sim = result["score"]
-
-            pred = int(sim >= threshold)
-
-            preds.append(pred)
-            labels.append(0)
+        if bool(row["is_duplicate"]):
+            expected = str(row["reference_product_id"])
+            candidate = str(result.get("product_id", ""))
+            candidate_matches.append(candidate == expected)
 
     preds = np.array(preds)
     labels = np.array(labels)
@@ -172,7 +162,11 @@ def evaluate_rule(csv_path: str, threshold: float, model_name: str = "e5_small")
     recall = tp / (tp + fn + 1e-9)
     f1 = 2 * precision * recall / (precision + recall + 1e-9)
 
-    log(f"[DUPLICATES] Precision={precision:.4f}, Recall={recall:.4f}, F1={f1:.4f}")
+    candidate_accuracy = float(np.mean(candidate_matches)) if candidate_matches else 0.0
+    log(
+        f"[DUPLICATES] Precision={precision:.4f}, Recall={recall:.4f}, "
+        f"F1={f1:.4f}, candidate_accuracy={candidate_accuracy:.4f}"
+    )
 
     return precision, recall, f1
 
@@ -194,11 +188,8 @@ def apply_rule_to_evaluation(csv_path: str, threshold: float, model_name: str = 
     for _, row in df.iterrows():
 
         incoming_text = f"{row['title']} {row['text']}"
-        incoming_vec = embed_product(incoming_text, model_name=model_name)
-
-        # buscar el más parecido del catálogo
-        result = search(incoming_text, top_k=1, model_name=model_name)[0]
-        sim = result["score"]
+        result = retrieve_candidate(incoming_text, model_name=model_name)
+        sim = float(result["score"])
 
         pred = int(sim >= threshold)
 
@@ -210,6 +201,7 @@ def apply_rule_to_evaluation(csv_path: str, threshold: float, model_name: str = 
         })
 
     out_df = pd.DataFrame(results)
-    out_df.to_csv("../results/resultados_duplicados.csv", index=False)
+    output_path = BASE_DIR / "results" / "resultados_duplicados.csv"
+    out_df.to_csv(output_path, index=False)
 
     log("[DUPLICATES] Archivo resultados_duplicados.csv generado correctamente.")

@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 
 from src.search_engine import search
-from src.embeddings import embed_query, embed_product
-from src.config import ESCI_MAPPING, TOP_K, log
+from src.embeddings import embed_query, embed_products
+from src.config import CATALOGO_COMPLETO, ESCI_MAPPING, TOP_K, log
 
 
 # ============================================================
@@ -27,18 +27,20 @@ def dcg_at_k(relevances, k=10):
     return np.sum((2**relevances - 1) / np.log2(np.arange(2, len(relevances) + 2)))
 
 
-def ndcg_at_k(relevances, k=10):
-    """Calcula nDCG@k."""
+def ndcg_at_k(relevances, k=10, ideal_relevances=None):
+    """Calcula nDCG@k usando todos los juicios disponibles para el ideal."""
     dcg = dcg_at_k(relevances, k)
-    ideal = dcg_at_k(sorted(relevances, reverse=True), k)
+    source = relevances if ideal_relevances is None else ideal_relevances
+    ideal = dcg_at_k(sorted(source, reverse=True), k)
     return dcg / (ideal + 1e-9)
 
 
-def recall_at_k(relevances, k=10):
-    """Recall@k: proporción de relevantes recuperados."""
+def recall_at_k(relevances, k=10, total_relevant=None):
+    """Recall@k sobre el número total de documentos relevantes."""
     relevances = np.array(relevances[:k])
     relevant = np.sum(relevances > 0)
-    total_relevant = np.sum(relevances)
+    if total_relevant is None:
+        total_relevant = relevant
     return relevant / (total_relevant + 1e-9)
 
 
@@ -76,21 +78,21 @@ def evaluate_search(queries_csv, relevances_csv, model_name="e5_small"):
         # Ejecutar búsqueda
         results = search(query_text, top_k=TOP_K, model_name=model_name)
 
-        # Construir vector de relevancias
+        # Construir el ranking recuperado y todos los juicios de la consulta.
+        relevance_by_product = {
+            row["product_id"]: ESCI_MAPPING[row["esci_label"]]
+            for _, row in df_rel.iterrows()
+        }
+        ideal_relevances = list(relevance_by_product.values())
         relevances = []
         for res in results:
             product_id = res["product_id"]
-            rel_row = df_rel[df_rel["product_id"] == product_id]
-
-            if len(rel_row) == 0:
-                relevances.append(0)
-            else:
-                esc = rel_row.iloc[0]["esci_label"]
-                relevances.append(ESCI_MAPPING[esc])
+            relevances.append(relevance_by_product.get(product_id, 0))
 
         # Métricas
-        ndcgs.append(ndcg_at_k(relevances, TOP_K))
-        recalls.append(recall_at_k(relevances, TOP_K))
+        ndcgs.append(ndcg_at_k(relevances, TOP_K, ideal_relevances))
+        total_relevant = sum(relevance > 0 for relevance in ideal_relevances)
+        recalls.append(recall_at_k(relevances, TOP_K, total_relevant))
         mrrs.append(mrr_at_k(relevances, TOP_K))
 
     metrics = {
@@ -108,25 +110,35 @@ def evaluate_search(queries_csv, relevances_csv, model_name="e5_small"):
 # LATENCIA p50 / p95
 # ============================================================
 
-def measure_latency(query_list, model_name="e5_small"):
+def measure_latency(query_list, model_name="e5_small", repeats=5, warmup=True):
     """
-    Mide latencia p50 y p95 sobre una lista de consultas.
+    Mide latencia p50 y p95 con calentamiento y repeticiones controladas.
     """
+
+    if not query_list:
+        raise ValueError("query_list no puede estar vacío")
+
+    if warmup:
+        for query in query_list:
+            search(query, top_k=TOP_K, model_name=model_name)
 
     latencies = []
 
-    for q in query_list:
-        t0 = time.time()
-        _ = search(q, top_k=TOP_K, model_name=model_name)
-        t1 = time.time()
-        latencies.append(t1 - t0)
+    for _ in range(repeats):
+        for query in query_list:
+            t0 = time.perf_counter()
+            search(query, top_k=TOP_K, model_name=model_name)
+            latencies.append(time.perf_counter() - t0)
 
     latencies = np.array(latencies)
 
     p50 = np.percentile(latencies, 50)
     p95 = np.percentile(latencies, 95)
 
-    log(f"[LATENCY] p50={p50:.4f}s, p95={p95:.4f}s")
+    log(
+        f"[LATENCY] p50={p50:.4f}s, p95={p95:.4f}s, "
+        f"queries={len(query_list)}, repeats={repeats}, warmup={warmup}"
+    )
 
     return {"p50": float(p50), "p95": float(p95)}
 
@@ -141,8 +153,15 @@ def evaluate_ann_fidelity(query_list, model_name="e5_small"):
     El oráculo exacto se calcula comparando la consulta con todos los productos.
     """
 
-    # Cargar catálogo completo
-    df = pd.read_csv("../data/catalogo_muestra.csv")
+    # El oráculo debe usar el mismo catálogo final que el índice evaluado.
+    df = pd.read_csv(CATALOGO_COMPLETO)
+    texts = (
+        df["title"].fillna("").astype(str)
+        + " "
+        + df["text"].fillna("").astype(str)
+    ).tolist()
+    product_vectors = embed_products(texts, model_name=model_name)
+    record_ids = df["record_id"].tolist()
 
     fidelities = []
 
@@ -154,16 +173,10 @@ def evaluate_ann_fidelity(query_list, model_name="e5_small"):
         ann_results = search(q, top_k=TOP_K, model_name=model_name)
         ann_ids = [r["record_id"] for r in ann_results]
 
-        # Oráculo exacto
-        scores = []
-        for _, row in df.iterrows():
-            text = row["title"] + " " + row["text"]
-            vec = embed_product(text, model_name=model_name)
-            score = np.dot(q_vec, vec)
-            scores.append((row["record_id"], score))
-
-        scores.sort(key=lambda x: x[1], reverse=True)
-        oracle_ids = [x[0] for x in scores[:TOP_K]]
+        # Oráculo exacto sobre los 15.000 productos del catálogo final.
+        scores = product_vectors @ q_vec
+        top_indices = np.argsort(-scores)[:TOP_K]
+        oracle_ids = [record_ids[index] for index in top_indices]
 
         # Fidelidad = intersección / TOP_K
         fidelity = len(set(ann_ids) & set(oracle_ids)) / TOP_K
